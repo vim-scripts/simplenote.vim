@@ -45,6 +45,14 @@ really play nice together, basic parts of this plugin are implemented in
 python. Therefore your vim has to be compiled with python support in order to
 use this plugin.
 
+## Usage behind proxy
+Since the plugin uses Python's urllib2 for making HTTP requests, you just have to
+add these lines (with the correct values) to your `.vimrc`:
+
+    let $HTTP_PROXY = 'http://<proxyuser&gt;:<proxypassword>@<proxyurl>:<proxyport>'
+    let $HTTPS_PROXY = 'http://<proxyuser&gt;:<proxypassword>@<proxyurl>:<proxyport>'
+
+
 ## Development
 - [Planned features](http://www.pivotaltracker.com/projects/288621)
 - [Bugs and issue tracker](https://github.com/mrtazz/simplenote.vim/issues)
