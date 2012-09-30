@@ -4,13 +4,6 @@
 " Author: Daniel Schauenberg <d@unwiredcouch.com>
 " WebPage: http://github.com/mrtazz/simplenote.vim
 " License: MIT
-" Usage:
-"   :Simplenote -l => list all notes
-"   :Simplenote -u => update a note from buffer
-"   :Simplenote -d => move note to trash
-"   :Simplenote -n => create new note from buffer
-"   :Simplenote -D => delete note in current buffer
-"   :Simplenote -t => tag note in current buffer
 "
 "
 
@@ -43,6 +36,13 @@ if exists("g:SimplenoteVertical")
   let s:vbuff = g:SimplenoteVertical
 else
   let s:vbuff = 0
+endif
+
+" line height
+if exists("g:SimplenoteListHeight")
+  let s:lineheight = g:SimplenoteListHeight
+else
+  let s:lineheight = 0
 endif
 
 
@@ -94,7 +94,15 @@ function! s:ScratchBuffer()
     setlocal bufhidden=hide
     setlocal noswapfile
     setlocal cursorline
-    setlocal filetype=txt
+    if exists("g:SimplenoteFiletype")
+      exe "setlocal filetype=" . g:SimplenoteFiletype
+    else
+      setlocal filetype=txt
+    endif
+
+    if (s:vbuff == 0) && (s:lineheight > 0)
+        exe "resize " . s:lineheight
+    endif
 endfunction
 
 
@@ -129,7 +137,7 @@ except ImportError:
 AUTH_URL = 'https://simple-note.appspot.com/api/login'
 DATA_URL = 'https://simple-note.appspot.com/api2/data'
 INDX_URL = 'https://simple-note.appspot.com/api2/index?'
-NOTE_FETCH_LENGTH = 20
+NOTE_FETCH_LENGTH = 100
 
 class Simplenote(object):
     """ Class for interacting with the simplenote web service """
@@ -224,8 +232,12 @@ class Simplenote(object):
         if note.has_key("tags"):
             note["tags"] = [unicode(t, 'utf-8') for t in note["tags"]]
 
+
         # determine whether to create a new note or updated an existing one
         if note.has_key("key"):
+            # set modification timestamp in milli-seconds since epoch
+            note["modifydate"] = int(round(time.time() * 1000))
+
             url = '%s/%s?auth=%s&email=%s' % (DATA_URL, note["key"],
                                               self.get_token(), self.username)
         else:
@@ -571,7 +583,7 @@ class SimplenoteVimInterface(object):
         else:
             print "Update failed.: %s" % note["key"]
 
-    def list_note_index_in_scratch_buffer(self, qty=float("inf")):
+    def list_note_index_in_scratch_buffer(self, qty=float("inf"), tags=[]):
         """ get all available notes and display them in a scratchbuffer """
         # Initialize the scratch buffer
         self.scratch_buffer()
@@ -579,14 +591,20 @@ class SimplenoteVimInterface(object):
         # clear global note id storage
         buffer = vim.current.buffer
         note_list, status = self.simplenote.get_note_list(qty)
+        if (len(tags) > 0):
+            note_list = [n for n in note_list if (n["deleted"] != 1 and
+                            len(set(n["tags"]).intersection(tags)) > 0)]
+        else:
+            note_list = [n for n in note_list if n["deleted"] != 1]
+
         # set global notes index object to notes
         if status == 0:
             note_titles = []
             notes = self.get_notes_from_keys([n['key'] for n in note_list])
-            notes.sort(key=lambda k: k['modifydate'])
+            notes.sort(key=lambda k: (('pinned' in k['systemtags']), k['modifydate']))
             notes.reverse()
-            note_titles = [self.format_title(n) for n in notes if n["deleted"] != 1]
-            self.note_index = [n["key"] for n in notes if n["deleted"] != 1]
+            note_titles = [self.format_title(n) for n in notes]
+            self.note_index = [n["key"] for n in notes]
             buffer[:] = note_titles
 
         else:
@@ -650,9 +668,9 @@ optionsexist = True if (float(vim.eval("a:0"))>=1) else False
 if param == "-l":
     if optionsexist:
         try:
-            interface.list_note_index_in_scratch_buffer(int(float(vim.eval("a:1"))))
+            interface.list_note_index_in_scratch_buffer(qty=int(vim.eval("a:1")))
         except:
-            interface.list_note_index_in_scratch_buffer()
+            interface.list_note_index_in_scratch_buffer(tags=vim.eval("a:1").split(","))
     else:
         interface.list_note_index_in_scratch_buffer()
 
