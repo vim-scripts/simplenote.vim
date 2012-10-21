@@ -45,6 +45,12 @@ else
   let s:lineheight = 0
 endif
 
+" line height
+if exists("g:SimplenoteSortOrder")
+  let s:sortorder = g:SimplenoteSortOrder
+else
+  let s:sortorder = "pinned, modifydate"
+endif
 
 if (s:user == "") || (s:password == "")
   let errmsg = "Simplenote credentials missing. Set g:SimplenoteUsername and "
@@ -455,6 +461,8 @@ class SimplenoteVimInterface(object):
         width -= max(m.floor(m.log(len(vim.current.buffer))) + 2, 5)
         width = int(width)
 
+        # get note tags
+        tags = "[%s]" % ",".join([t.encode('utf-8') for t in note["tags"]])
 
         # format date
         mt = time.localtime(float(note["modifydate"]))
@@ -465,14 +473,16 @@ class SimplenoteVimInterface(object):
         else:
             title = str(note["key"])
 
+
         # Compress everything into the appropriate number of columns
-        title_width = width - len(mod_time) - 1
+        title_meta_length = len(tags) + len(mod_time) + 1
+        title_width = width - title_meta_length
         if len(title) > title_width:
             title = title[:title_width]
         elif len(title) < title_width:
             title = title.ljust(title_width)
 
-        return "%s %s" % (title, mod_time)
+        return "%s %s %s" % (title, tags, mod_time)
 
 
     def get_notes_from_keys(self, key_list):
@@ -502,14 +512,17 @@ class SimplenoteVimInterface(object):
         """
         vim.command("call s:ScratchBufferOpen('%s')" % sb_name)
 
-    def display_note_in_scratch_buffer(self):
+    def display_note_in_scratch_buffer(self, note_id=None):
         """ displays the note corresponding to the given key in the scratch
         buffer
         """
-        # get the notes id which is shown in brackets in the current line
-        line, col = vim.current.window.cursor
-        note_id = self.note_index[int(line) - 1]
-        # store it as a global script variable
+        # get the notes id which is shown in brackets in the current line if we
+        # didn't got passed a key
+        if note_id is None:
+            line, col = vim.current.window.cursor
+            note_id = self.note_index[int(line) - 1]
+
+        # get note and open it in scratch buffer
         note, status = self.simplenote.get_note(note_id)
         vim.command("""call s:ScratchBufferOpen("%s")""" % note_id)
         self.set_current_note(note_id)
@@ -601,8 +614,7 @@ class SimplenoteVimInterface(object):
         if status == 0:
             note_titles = []
             notes = self.get_notes_from_keys([n['key'] for n in note_list])
-            notes.sort(key=lambda k: (('pinned' in k['systemtags']), k['modifydate']))
-            notes.reverse()
+            notes.sort(cmp=compare_notes)
             note_titles = [self.format_title(n) for n in notes]
             self.note_index = [n["key"] for n in notes]
             buffer[:] = note_titles
@@ -614,6 +626,73 @@ class SimplenoteVimInterface(object):
         vim.command("setl nomodifiable")
         vim.command("setlocal nowrap")
         vim.command("nnoremap <buffer><silent> <CR> <Esc>:call <SID>GetNoteToCurrentBuffer()<CR>")
+
+
+
+def compare_notes(note1, note2):
+    """ determine the sort order for two passed in notes
+
+        Parameters:
+          note1 - first note object
+          note2 - second note object
+
+        Returns -1 if the first note is considered smaller, 0 for equal
+        notes and 1 if the first note is considered larger
+    """
+    # setup compare functions
+    def compare_pinned(note1, note2):
+        if ("pinned" in note1["systemtags"] and
+            "pinned" not in note2["systemtags"]):
+            return -1
+        elif ("pinned" in note2["systemtags"] and
+            "pinned" not in note1["systemtags"]):
+            return 1
+        else:
+            return 0
+
+
+    def compare_modified(note1, note2):
+        if float(note1["modifydate"]) < float(note2["modifydate"]):
+            return 1
+        elif float(note1["modifydate"]) > float(note2["modifydate"]):
+            return -1
+        else:
+            return 0
+
+    def compare_created(note1, note2):
+        if float(note1["createdate"]) < float(note2["createdate"]):
+            return 1
+        elif float(note1["createdate"]) > float(note2["createdate"]):
+            return -1
+        else:
+            return 0
+
+    def compare_tags(note1, note2):
+        if note1["tags"] < note2["tags"]:
+            return 1
+        if note1["tags"] > note2["tags"]:
+            return -1
+        else:
+            return 0
+
+    # dict for dynamically calling compare functions
+    sortfuncs = { "pinned": compare_pinned,
+                  "createdate": compare_created,
+                  "modifydate": compare_modified,
+                  "tags": compare_tags
+                }
+
+    sortorder = vim.eval("s:sortorder").split(",")
+
+    for key in sortorder:
+        res = sortfuncs.get(key.strip(),lambda x,y: 0)(note1, note2)
+        if res != 0:
+            return res
+
+    # return equal if no comparison hit
+    return 0
+
+
 
 
 class NoteFetcher(Thread):
@@ -688,6 +767,12 @@ elif param == "-D":
 
 elif param == "-t":
     interface.set_tags_for_current_note()
+
+elif param == "-o":
+    if optionsexist:
+        interface.display_note_in_scratch_buffer(vim.eval("a:1"))
+    else:
+        print "No notekey given."
 
 else:
     print "Unknown argument"
